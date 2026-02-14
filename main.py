@@ -1,8 +1,8 @@
 import os
-import time
 import logging
 import requests
 from collections import defaultdict
+from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     Application,
@@ -20,24 +20,22 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 CARD_NUMBER = "5859831080517518"
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # Railway URL
 
  
 # LOGGING
  
-logging.basicConfig(
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    level=logging.INFO
-)
+logging.basicConfig(level=logging.INFO)
 
  
 # STATE
  
-user_memory = {}          # chat memory
-report_waiting = {}       # users waiting to send report
-support_waiting = {}      # users waiting to send support payment
-user_requests = defaultdict(list)  # for rate limiting
-RATE_LIMIT = 5            # messages
-RATE_WINDOW = 10          # seconds
+user_memory = {}
+report_waiting = {}
+support_waiting = {}
+user_requests = defaultdict(list)
+RATE_LIMIT = 5
+RATE_WINDOW = 10
 
  
 # AI
@@ -49,14 +47,17 @@ def query_openrouter(user_text, chat_history=None):
         chat_history = []
 
     messages = [
-        {"role": "system", "content": (
-            "You are Mehrnaz, a witty, playful, slightly blunt assistant. "
-            "You respond honestly, use emojis, humor, casual language, "
-            "and sometimes a little sarcasm. "
-            "Keep replies short (1-2 sentences). "
-            "Reply in the same language as the user (English or Persian). "
-            "Never narrate or give instructions."
-        )}
+        {
+            "role": "system",
+            "content": (
+                "You are Mehrnaz, a witty, playful, slightly blunt assistant. "
+                "You respond honestly, use emojis, humor, casual language, "
+                "and sometimes a little sarcasm. "
+                "Keep replies short (1-2 sentences). "
+                "Reply in the same language as the user (English or Persian). "
+                "Never narrate or give instructions."
+            )
+        }
     ]
     messages.extend(chat_history)
     messages.append({"role": "user", "content": user_text})
@@ -71,10 +72,7 @@ def query_openrouter(user_text, chat_history=None):
     try:
         r = requests.post(
             API_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_KEY}",
-                "Content-Type": "application/json"
-            },
+            headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
             json=payload,
             timeout=15
         )
@@ -119,9 +117,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     text = update.message.text.strip()
 
-     
     # RATE LIMIT
-     
+    import time
     now = time.time()
     user_requests[user_id] = [t for t in user_requests[user_id] if now - t < RATE_WINDOW]
     if len(user_requests[user_id]) >= RATE_LIMIT:
@@ -129,9 +126,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_requests[user_id].append(now)
 
-     
     # REPORT
-     
     if report_waiting.get(user_id):
         logging.info(f"REPORT {user_id}: {text}")
         await context.bot.send_message(ADMIN_CHAT_ID, f"Report from {user.full_name} ({user.id}):\n{text}")
@@ -139,9 +134,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         report_waiting[user_id] = False
         return
 
-     
     # SUPPORT
-     
     if support_waiting.get(user_id):
         logging.info(f"SUPPORT {user_id}: {text}")
         await context.bot.send_message(ADMIN_CHAT_ID, f"Support payment from {user.full_name} ({user.id}):\n{text}")
@@ -149,32 +142,49 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         support_waiting[user_id] = False
         return
 
-     
     # NORMAL CHAT
-     
     if user_id not in user_memory:
         user_memory[user_id] = []
 
     reply = query_openrouter(text, user_memory[user_id])
     user_memory[user_id].append({"role": "user", "content": text})
     user_memory[user_id].append({"role": "assistant", "content": reply})
-
-    # keep last 10 messages
     user_memory[user_id] = user_memory[user_id][-10:]
 
     await update.message.reply_text(reply)
 
  
-# APPLICATION
+# TELEGRAM APP
  
-app = Application.builder().token(BOT_TOKEN).build()
-app.add_handler(CommandHandler("start", start))
-app.add_handler(CallbackQueryHandler(button_handler))
-app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+telegram_app = Application.builder().token(BOT_TOKEN).build()
+telegram_app.add_handler(CommandHandler("start", start))
+telegram_app.add_handler(CallbackQueryHandler(button_handler))
+telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
  
-# RUN
+# FASTAPI WEBHOOK
  
-if __name__ == "__main__":
-    logging.info("🤖 Bot running with polling...")
-    app.run_polling()
+app = FastAPI()
+
+@app.post(f"/{BOT_TOKEN}")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, telegram_app.bot)
+    await telegram_app.process_update(update)
+    return {"ok": True}
+
+ 
+# STARTUP
+ 
+@app.on_event("startup")
+async def on_startup():
+    # Set webhook
+    url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    logging.info(f"Setting webhook to: {url}")
+    await telegram_app.bot.set_webhook(url)
+
+ 
+# RUN with Uvicorn
+ 
+# Railway automatically runs:
+# uvicorn main:app --host 0.0.0.0 --port $PORT
