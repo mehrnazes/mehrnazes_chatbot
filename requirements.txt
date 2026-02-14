@@ -1,7 +1,4 @@
 python-telegram-bot==20.5
 requests
-torch
-transformers
-huggingface_hub
 fastapi
 uvicorn
