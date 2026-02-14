@@ -1,10 +1,9 @@
 import os
 import time
-import json
 import logging
-import requests
 from collections import defaultdict
 
+import requests
 from fastapi import FastAPI, Request
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
@@ -25,7 +24,6 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 CARD_NUMBER = "5859831080517518"
-
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
  
@@ -34,13 +32,13 @@ API_URL = "https://openrouter.ai/api/v1/chat/completions"
 logging.basicConfig(level=logging.INFO)
 
  
-# FASTAPI
+# FASTAPI APP
  
 app = FastAPI()
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 
  
- #STATE
+# STATE
  
 user_memory = {}
 report_waiting = {}
@@ -48,19 +46,18 @@ support_waiting = {}
 user_requests = defaultdict(list)
 
 RATE_LIMIT = 5
-RATE_WINDOW = 10
+RATE_WINDOW = 10  # seconds
 
  
- #AI
+# AI QUERY
  
 def query_openrouter(user_text, chat_history=None):
     if chat_history is None:
         chat_history = []
 
-    messages = [{
-        "role": "system",
-        "content": "You are witty and playful. Keep replies short."
-    }]
+    messages = [
+        {"role": "system", "content": "You are witty, playful, slightly blunt, reply in English or Persian as user types, keep replies short."}
+    ]
     messages.extend(chat_history)
     messages.append({"role": "user", "content": user_text})
 
@@ -74,18 +71,17 @@ def query_openrouter(user_text, chat_history=None):
     try:
         r = requests.post(
             API_URL,
-            headers={
-                "Authorization": f"Bearer {OPENROUTER_KEY}",
-                "Content-Type": "application/json"
-            },
-            json=payload
+            headers={"Authorization": f"Bearer {OPENROUTER_KEY}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=20
         )
         return r.json()["choices"][0]["message"]["content"]
-    except:
+    except Exception as e:
+        logging.error(f"OpenRouter API error: {e}")
         return "یه مشکلی پیش اومده 😅"
 
  
- #HANDLERS
+# HANDLERS
  
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
@@ -93,16 +89,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("📩 Report", callback_data="report")],
         [InlineKeyboardButton("💖 Support", callback_data="support")]
     ]
-
     await update.message.reply_text(
-        "سلام سلام 😎",
+        "سلام سلام 😎 من مِهرنازه‌ام!",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
-
     user_id = query.from_user.id
     data = query.data
 
@@ -118,58 +112,63 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.message.from_user
-    user_id = user.id
+    user_id = update.message.from_user.id
     text = update.message.text
 
-     #Rate limit
+     
+    # Rate limit
+     
     now = time.time()
-    user_requests[user_id] = [
-        t for t in user_requests[user_id]
-        if now - t < RATE_WINDOW
-    ]
+    user_requests[user_id] = [t for t in user_requests[user_id] if now - t < RATE_WINDOW]
 
     if len(user_requests[user_id]) >= RATE_LIMIT:
         await update.message.reply_text("آروم‌تر 😅")
         return
-
     user_requests[user_id].append(now)
 
-     #Report mode
+     
+    # Report
+     
     if report_waiting.get(user_id):
-        logging.info(f"REPORT {user_id} {text}")
-        await context.bot.send_message(ADMIN_CHAT_ID, f"Report: {text}")
+        logging.info(f"REPORT {user_id}: {text}")
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Report from {update.message.from_user.full_name}:\n{text}")
         await update.message.reply_text("ثبت شد ✅")
         report_waiting[user_id] = False
         return
 
-     #Support mode
+     
+    # Support
+     
     if support_waiting.get(user_id):
-        logging.info(f"PAYMENT {user_id} {text}")
-        await context.bot.send_message(ADMIN_CHAT_ID, f"Payment {user.full_name}: {text}")
+        logging.info(f"PAYMENT {user_id}: {text}")
+        await context.bot.send_message(chat_id=ADMIN_CHAT_ID, text=f"Payment from {update.message.from_user.full_name}:\n{text}")
         await update.message.reply_text("ثبت شد 🙌")
         support_waiting[user_id] = False
         return
 
-     #Normal chat
+     
+    # Normal chat
+     
     if user_id not in user_memory:
         user_memory[user_id] = []
 
     reply = query_openrouter(text, user_memory[user_id])
     user_memory[user_id].append({"role": "user", "content": text})
     user_memory[user_id].append({"role": "assistant", "content": reply})
+    # Keep only last 10 messages
+    user_memory[user_id] = user_memory[user_id][-10:]
 
     await update.message.reply_text(reply)
 
  
- #REGISTER HANDLERS
+# REGISTER HANDLERS
  
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CallbackQueryHandler(button_handler))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
  
- #WEBHOOK ROUTE
+# WEBHOOK ROUTE
  
 @app.post(f"/{BOT_TOKEN}")
 async def webhook(request: Request):
@@ -179,7 +178,7 @@ async def webhook(request: Request):
     return {"ok": True}
 
  
- #STARTUP
+# STARTUP
  
 @app.on_event("startup")
 async def on_startup():
