@@ -155,33 +155,46 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
  
 # TELEGRAM APP
- 
+
 telegram_app = Application.builder().token(BOT_TOKEN).build()
 telegram_app.add_handler(CommandHandler("start", start))
 telegram_app.add_handler(CallbackQueryHandler(button_handler))
 telegram_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
- 
+
 # FASTAPI WEBHOOK
- 
+
 app = FastAPI()
+
+
+@app.on_event("startup")
+async def on_startup():
+    # Properly initialize PTB
+    await telegram_app.initialize()
+    await telegram_app.start()
+
+    # Set webhook
+    url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
+    logging.info(f"Setting webhook to: {url}")
+    await telegram_app.bot.set_webhook(url)
+
+
+@app.on_event("shutdown")
+async def on_shutdown():
+    # Graceful shutdown (important on Railway)
+    await telegram_app.stop()
+    await telegram_app.shutdown()
+
 
 @app.post(f"/{BOT_TOKEN}")
 async def telegram_webhook(req: Request):
     data = await req.json()
     update = Update.de_json(data, telegram_app.bot)
-    await telegram_app.process_update(update)
-    return {"ok": True}
 
- 
-# STARTUP
- 
-@app.on_event("startup")
-async def on_startup():
-    # Set webhook
-    url = f"{WEBHOOK_URL}/{BOT_TOKEN}"
-    logging.info(f"Setting webhook to: {url}")
-    await telegram_app.bot.set_webhook(url)
+    # Now this will NOT crash
+    await telegram_app.process_update(update)
+
+    return {"ok": True}
 
  
 # RUN with Uvicorn
