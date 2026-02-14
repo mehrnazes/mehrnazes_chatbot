@@ -13,19 +13,25 @@ from telegram.ext import (
     filters
 )
 
- # ENV  
+ 
+# ENV
+ 
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 OPENROUTER_KEY = os.getenv("OPENROUTER_KEY")
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID"))
 CARD_NUMBER = "5859831080517518"
 
- # LOGGING  
+ 
+# LOGGING
+ 
 logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
 
- # STATE  
+ 
+# STATE
+ 
 user_memory = {}          # chat memory
 report_waiting = {}       # users waiting to send report
 support_waiting = {}      # users waiting to send support payment
@@ -33,7 +39,9 @@ user_requests = defaultdict(list)  # for rate limiting
 RATE_LIMIT = 5            # messages
 RATE_WINDOW = 10          # seconds
 
- # AI  
+ 
+# AI
+ 
 API_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 def query_openrouter(user_text, chat_history=None):
@@ -75,7 +83,9 @@ def query_openrouter(user_text, chat_history=None):
         logging.error(f"OpenRouter API error: {e}")
         return "یه مشکلی پیش اومده 😅"
 
- # HANDLERS  
+ 
+# HANDLERS
+ 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         [InlineKeyboardButton("💬 Chat", callback_data="chat")],
@@ -109,7 +119,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = user.id
     text = update.message.text.strip()
 
-     # RATE LIMIT  
+     
+    # RATE LIMIT
+     
     now = time.time()
     user_requests[user_id] = [t for t in user_requests[user_id] if now - t < RATE_WINDOW]
     if len(user_requests[user_id]) >= RATE_LIMIT:
@@ -117,7 +129,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     user_requests[user_id].append(now)
 
-     # REPORT  
+     
+    # REPORT
+     
     if report_waiting.get(user_id):
         logging.info(f"REPORT {user_id}: {text}")
         await context.bot.send_message(ADMIN_CHAT_ID, f"Report from {user.full_name} ({user.id}):\n{text}")
@@ -125,7 +139,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         report_waiting[user_id] = False
         return
 
-     # SUPPORT  
+     
+    # SUPPORT
+     
     if support_waiting.get(user_id):
         logging.info(f"SUPPORT {user_id}: {text}")
         await context.bot.send_message(ADMIN_CHAT_ID, f"Support payment from {user.full_name} ({user.id}):\n{text}")
@@ -133,7 +149,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         support_waiting[user_id] = False
         return
 
-     # NORMAL CHAT  
+     
+    # NORMAL CHAT
+     
     if user_id not in user_memory:
         user_memory[user_id] = []
 
@@ -146,13 +164,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(reply)
 
- # APPLICATION  
+ 
+# APPLICATION
+ 
 app = Application.builder().token(BOT_TOKEN).build()
 app.add_handler(CommandHandler("start", start))
 app.add_handler(CallbackQueryHandler(button_handler))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
- # RUN  
+ 
+# RUN
+ 
 if __name__ == "__main__":
-    logging.info("🤖 Bot running (polling)...")
+    logging.info("🤖 Bot running with polling...")
     app.run_polling()
